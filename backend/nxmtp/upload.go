@@ -346,10 +346,15 @@ func (c *Client) uploadOne(storageID uint32, it uploadItem, tracker *progressTra
 
 	deviceName := deviceSafeName(pathBase(it.devicePath))
 
-	// MTP offers no atomic replace operation. Never delete the original
-	// before a transfer that can fail or be cancelled.
-	if _, err := c.findChild(storageID, parent, deviceName); err == nil {
-		return 0, errf(KindInvalidInput, "upload", "destination %q already exists; rename or back it up before uploading", it.devicePath)
+	// Explicitly replace same-name files. MTP replacement is not atomic.
+	if existing, err := c.findChild(storageID, parent, deviceName); err == nil {
+		if existing.isFolder {
+			return 0, errf(KindInvalidInput, "upload", "destination is a directory: %s", it.devicePath)
+		}
+		if err := c.t.DeleteObject(existing.handle); err != nil {
+			return 0, classify("replace "+it.devicePath, err)
+		}
+		c.cache.invalidate(storageID, it.devicePath)
 	} else if KindOf(err) != KindNotFound {
 		return 0, err
 	}
