@@ -329,6 +329,13 @@ func TestUploadThenReadBack(t *testing.T) {
 		t.Fatalf("Upload: %v", err)
 	}
 
+	if err := os.WriteFile(src, []byte("replacement"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Upload(nxmtp.UploadRequest{StorageID: sd.Sid, Sources: []string{src}, Destination: "/"}, nil, nil); err == nil {
+		t.Fatal("overwrite must be rejected")
+	}
+
 	got, ok := dev.Data(fake.SidSDCard, "/upload.bin")
 	if !ok {
 		t.Fatalf("uploaded file not found; tree = %v", dev.Tree())

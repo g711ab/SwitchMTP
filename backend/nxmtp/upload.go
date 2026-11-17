@@ -346,16 +346,12 @@ func (c *Client) uploadOne(storageID uint32, it uploadItem, tracker *progressTra
 
 	deviceName := deviceSafeName(pathBase(it.devicePath))
 
-	// Replace an existing object rather than creating a duplicate: MTP happily
-	// allows two entries with the same name in one directory, which then
-	// becomes impossible to disambiguate.
-	if existing, err := c.findChild(storageID, parent, deviceName); err == nil {
-		if c.caps.DeleteObject {
-			if err := c.t.DeleteObject(existing.handle); err != nil && !IsUnsupported(err) {
-				return 0, classify("upload", err)
-			}
-			c.cache.invalidate(storageID, it.devicePath)
-		}
+	// MTP offers no atomic replace operation. Never delete the original
+	// before a transfer that can fail or be cancelled.
+	if _, err := c.findChild(storageID, parent, deviceName); err == nil {
+		return 0, errf(KindInvalidInput, "upload", "destination %q already exists; rename or back it up before uploading", it.devicePath)
+	} else if KindOf(err) != KindNotFound {
+		return 0, err
 	}
 
 	info := &mtp.ObjectInfo{

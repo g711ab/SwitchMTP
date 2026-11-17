@@ -80,7 +80,7 @@ func (c *Client) Download(req DownloadRequest, onPreprocess func(PreprocessResul
 	if req.Destination == "" {
 		return nil, newErr(KindInvalidInput, "download", "no destination directory given")
 	}
-	if err := os.MkdirAll(req.Destination, 0o755); err != nil {
+	if err := makeDownloadDirectory(req.Destination); err != nil {
 		return nil, wrapErr(KindLocalIO, "download", err)
 	}
 
@@ -175,7 +175,7 @@ func (c *Client) planDownload(req DownloadRequest, st *Storage) ([]downloadItem,
 		}
 
 		localRoot := filepath.Join(req.Destination, sanitizeLocalName(base))
-		if err := os.MkdirAll(localRoot, 0o755); err != nil {
+		if err := makeDownloadDirectory(localRoot); err != nil {
 			return nil, 0, wrapErr(KindLocalIO, "download", err)
 		}
 		dirs++
@@ -206,7 +206,7 @@ func (c *Client) planDirectory(storageID uint32, devicePath string, handle uint3
 		c.cache.put(storageID, childDevice, cachedNode{handle: e.Handle, isFolder: e.IsFolder})
 
 		if e.IsFolder {
-			if err := os.MkdirAll(childLocal, 0o755); err != nil {
+			if err := makeDownloadDirectory(childLocal); err != nil {
 				return dirs, wrapErr(KindLocalIO, "download", err)
 			}
 			dirs++
@@ -239,16 +239,16 @@ func (c *Client) planDirectory(storageID uint32, devicePath string, handle uint3
 func (c *Client) downloadOne(it downloadItem, tracker *progressTracker) (int64, error) {
 	tracker.beginFile(filepath.Base(it.localPath), it.devicePath, it.size)
 
-	if err := os.MkdirAll(filepath.Dir(it.localPath), 0o755); err != nil {
+	if err := makeDownloadDirectory(filepath.Dir(it.localPath)); err != nil {
 		return 0, wrapErr(KindLocalIO, "download", err)
 	}
 
-	tmp := it.localPath + ".switchmtp-part"
-	f, err := os.Create(tmp)
+	f, err := os.CreateTemp(filepath.Dir(it.localPath), ".switchmtp-part-*")
 	if err != nil {
 		return 0, wrapErr(KindLocalIO, "download", err)
 	}
 
+	tmp := f.Name()
 	cleanup := func() {
 		f.Close()
 		os.Remove(tmp)
@@ -335,4 +335,28 @@ func sanitizeLocalName(name string) string {
 		name = "_" + name
 	}
 	return name
+}
+
+// Reject symlink components instead of following device-named directories.
+// This does not defend against a local process racing directory replacement.
+func makeDownloadDirectory(dir string) error {
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	// Resolve the user-selected parent separately: macOS /tmp and /var are
+	// system symlinks. All existing components are rejected here, conservatively.
+	for current := absolute; ; current = filepath.Dir(current) {
+		info, err := os.Lstat(current)
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return errf(KindInvalidInput, "download", "symlink directory is not allowed: %s", current)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if filepath.Dir(current) == current {
+			break
+		}
+	}
+	return os.MkdirAll(absolute, 0o755)
 }
