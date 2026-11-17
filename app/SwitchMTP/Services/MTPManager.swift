@@ -872,7 +872,13 @@ final class MTPManager: ObservableObject {
                     self.transferStats = nil
                     self.lastProgressAt = nil
                     let localizedError = ErrorStringLocalizer.localize(errorString)
-                    self.connectionState = .error(localizedError)
+                    // Validation failures happen before transfer and do not invalidate
+                    // the live device session (including refusal to overwrite).
+                    let envelope = jsonString.data(using: .utf8)
+                        .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                    if envelope?["errorType"] as? String != "invalidInput" {
+                        self.connectionState = .error(localizedError)
+                    }
                     self.errorMessage = localizedError
                     self.finishActiveInstall(errorString: errorString)
                     self.runPendingNavigation()
