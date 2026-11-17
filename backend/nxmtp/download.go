@@ -80,9 +80,17 @@ func (c *Client) Download(req DownloadRequest, onPreprocess func(PreprocessResul
 	if req.Destination == "" {
 		return nil, newErr(KindInvalidInput, "download", "no destination directory given")
 	}
-	if err := makeDownloadDirectory(req.Destination); err != nil {
+	if err := os.MkdirAll(req.Destination, 0o755); err != nil {
 		return nil, wrapErr(KindLocalIO, "download", err)
 	}
+
+	// Resolve the destination explicitly selected by the user once. macOS
+	// /var and /tmp are system symlinks; device-provided descendants may not be.
+	resolvedDestination, err := filepath.EvalSymlinks(req.Destination)
+	if err != nil {
+		return nil, wrapErr(KindLocalIO, "download", err)
+	}
+	req.Destination = resolvedDestination
 
 	// Plan the transfer. A virtual storage cannot be sized in advance, so we
 	// tell the UI to show an indefinite progress indicator rather than a
